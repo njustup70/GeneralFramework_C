@@ -14,7 +14,7 @@ void SystemType::Init(bool Sc)
     DWT_Init(CPU_HERT_A_BOARD_MHZ);
 
     // 初始化Monitor监视器
-    Monitor::GetInstance().Init(&huart2, nullptr, false);
+    Monitor::GetInstance().Init(&huart1, nullptr, false);
 
     // 初始化系统灯带
     sys_ledband.Init(&htim1, TIM_CHANNEL_1, 13);
@@ -49,12 +49,24 @@ void SystemType::Run()
     runtime_tick = DWT_GetTimeline_Sec();
 
     static int temp_cnt = 0;
-    if (temp_cnt++ >= 100)
+    // 跟踪变量（非高性能模式下）
+    if (!Monitor::GetInstance().high_performance_mode && temp_cnt++ >= 1)
     {
         Monitor::GetInstance().LogTrack();
         temp_cnt = 0;
     }
 }
+
+void SystemType::PerformanceRun()
+{
+    // 高性能模式下，1000Hz跟踪变量
+    if (Monitor::GetInstance().high_performance_mode)
+    {
+        Monitor::GetInstance().LogTrackJustFloat();
+    }
+}
+
+
 
 void SystemType::_Update_LedBand()
 {

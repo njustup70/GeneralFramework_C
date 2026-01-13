@@ -28,8 +28,8 @@ void MotorDJI::Init(CAN_HandleTypeDef *hcan, uint8_t motorESC_id, MotorDJIMode d
 	// 首先，初始化其 速度环Pid类
 	if (fastInit)
 	{
-		speed_pid.Init(5, 10, 0);
-		speed_pid.IncreLize();											// 增量式速度环
+		speed_pid.Init(10, 1.6, 0);
+		// speed_pid.IncreLize();											// 增量式速度环
 		speed_pid.ForwardLize(PidGeneral::SpeedForward, 0.8f); 			// 速度型前馈
 	}
 	
@@ -227,7 +227,7 @@ void MotorDJI::_MotorDJI_SpeedLoop()
 	moto_measure_t *ptr = &measure;
 
 	// 计算目标的 速度PID输出（输出为电流）
-	float targ_current_temp = speed_pid.Calc(targ_speed, ptr->speed_rpm, _current_limit);
+	float targ_current_temp = speed_pid.Calc(targ_speed, kalman_rpm, _current_limit);
 
 	// 限制爬坡率
 	float delta_current = targ_current_temp - targ_current;
@@ -297,7 +297,7 @@ void _MotorDJI_DecodeMeasure(MotorDJI* motor_p, uint8_t *Data)
 	ptr->temprature = Data[6];
 
 
-	// 更新圈数统计
+	// 更新圈数统计 (使用的angle而非speed_rpm)
 	if (ptr->angle - ptr->last_angle > 4096)
 		ptr->round_cnt--;
 	else if (ptr->angle - ptr->last_angle < -4096)
@@ -325,6 +325,16 @@ void _MotorDJI_DecodeMeasure(MotorDJI* motor_p, uint8_t *Data)
 
 	// 计算平均接收时间间隔和频率
 	motor_p->_recv_freq = motor_p->_recv_sum_interval > 0 ?(10000.0f / (motor_p->_recv_sum_interval / 10.0f)) : 0.0f;
+
+	// 计算卡尔曼观测器
+	// 输入为电流，单位A（3508将-20A~20A映射到了-8192~8192）
+	float current_A = motor_p->targ_current / 8192.0f * 20.0f;
+	// 观测变量为total_angle，但其单位为SI制的rad
+	float angle_rad = motor_p->measure.total_angle / 8192.0f * 2.0f * 3.1415926f;
+
+	motor_p->kalman_ob.Observe({current_A}, {angle_rad});
+
+	motor_p->kalman_rpm = motor_p->kalman_ob.x(1, 0) * 60.0f / (2.0f * 3.1415926f); // 转换为rpm
 }
 
 

@@ -5,13 +5,14 @@
  */
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+// #ifdef __cplusplus
+// extern "C" {
+// #endif
 
 #include "stm32f4xx_hal.h"
 #include "bsp_can.h"
 #include "pids.hpp"
+#include "controller.hpp"
 
 #define ABS(x) ((x > 0) ? (x) : (-x))
 #define Lim_ABS(x, y) \
@@ -127,6 +128,11 @@ public:
 
 	/**		属性类变量	**/
 	MotorDJIMode mode = None_Control;	// 电机当前控制模式
+
+
+	/**		测试用		**/
+	KalmanObserver<1, 3, 1> kalman_ob;		// 卡尔曼观测器
+	float kalman_rpm = 0.0f;				// 卡尔曼观测器估计的转速
 };
 
 namespace MotorDJIConst
@@ -140,6 +146,6 @@ typedef MotorDJI MotorC620;
 
 
 
-#ifdef __cplusplus
-}
-#endif
+// #ifdef __cplusplus
+// }
+// #endif

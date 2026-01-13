@@ -1,5 +1,6 @@
 #include "Monitor.hpp"
 #include "stdarg.h"
+#include "string.h"
 #include "stdio.h"
 #include "System.hpp"
 
@@ -10,6 +11,8 @@ const static char log_head[7] = "[LOG]:";
 const static uint8_t LogPort = 0x01;    // 日志使用的端口号
 const static uint8_t WatchPort = 0x02;  // 监视使用的端口号
 const static uint8_t TrackPort = 0x03;  // 跟踪使用的端口号
+
+const static uint8_t justfloat_tail[4] = {0x00, 0x00, 0x80, 0x7f};  // VOFA+ JustFloat 协议的帧尾 (Little Endian: 00 00 80 7f)
 
 
 template<typename T>
@@ -91,6 +94,50 @@ void Monitor::LogTrack()
 
     // 发送编码后的数据
     host_coder.SendRawMsg(track_send_buf, strlen((char*)track_send_buf));   
+}
+
+
+
+
+void Monitor::LogTrackJustFloat()
+{
+    if (track_count < 1) return;
+
+    // 清空缓冲区 (复用 vofa_buf，因为它在头文件里定义了但没被用)
+    // 你的 Monitor.hpp 里定义了 byte vofa_buf[64]，这里正好用上
+    // 8个变量 * 4字节 + 4字节帧尾 = 36字节，64字节足够了
+    size_t used_bytes = 0;
+
+    for(int i = 0; i < track_count; i++)
+    {
+        float temp_val = 0.0f;
+
+        // 1. 统一类型转换为 float
+        // JustFloat 协议要求通道数据必须是 32bit float
+        switch (track_type[i])
+        {
+            case track_uint8:  temp_val = (float)(*(uint8_t*)track_list[i]);  break;
+            case track_int8:   temp_val = (float)(*(int8_t*)track_list[i]);   break;
+            case track_uint16: temp_val = (float)(*(uint16_t*)track_list[i]); break;
+            case track_int16:  temp_val = (float)(*(int16_t*)track_list[i]);  break;
+            case track_uint32: temp_val = (float)(*(uint32_t*)track_list[i]); break;
+            case track_int32:  temp_val = (float)(*(int32_t*)track_list[i]);  break;
+            case track_float:  temp_val = *(float*)track_list[i];             break;
+            default: break;
+        }
+
+        // 2. 内存拷贝 (4字节)
+        // STM32 是小端序(Little Endian)，VOFA+ 也是小端序，直接拷贝即可
+        memcpy(&vofa_buf[used_bytes], &temp_val, 4);
+        used_bytes += 4;
+    }
+
+    // 3. 追加帧尾 (00 00 80 7f)
+    memcpy(&vofa_buf[used_bytes], justfloat_tail, 4);
+    used_bytes += 4;
+
+    // 4. 发送原始二进制数据
+    host_coder.SendRawMsg(vofa_buf, used_bytes);
 }
 
 
@@ -192,6 +239,11 @@ void Monitor::Watch(WatchInfo info)
         watch_buf[watch_count] = info;
         watch_count++;
     }
+}
+
+void Monitor::Perflize()
+{
+    high_performance_mode = true;
 }
 
 

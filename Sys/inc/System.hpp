@@ -180,6 +180,9 @@ public:
 
     /// @brief 运行机器人系统主进程
     void Run();
+
+    /// @brief 高性能运行进程（1000Hz）
+    void PerformanceRun();
     
     
     private:
