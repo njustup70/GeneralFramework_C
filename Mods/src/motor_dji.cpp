@@ -5,6 +5,7 @@
  * @date 2025-8-21
  */
 #include "motor_dji.hpp"
+#include "RtosCpp.hpp"
 #include "bsp_can.h"
 #include "bsp_dwt.h"
 
@@ -127,6 +128,17 @@ uint8_t MotorDJI::_GetCanSeg(uint8_t motor_id)
 	return 0; // 默认返回0
 }
 
+
+float MotorDJI::_GetDelayedCurrent(uint8_t delay_tick)
+{
+	if (delay_tick >= 5) delay_tick = 4; // 最大只能取到4个tick前的数据
+	float history_u = history_current[(history_index + 5 - (delay_tick + 1)) % 5];
+
+	return history_u;
+}
+
+
+
 /**
  * @brief 控制所有已注册电机
  * @details 该函数会遍历所有已注册的电机实例，并调用其Control方法，最后根据返回的电流值发送CAN指令
@@ -207,6 +219,10 @@ int16_t MotorDJI::Control()
 			_MotorDJI_PosLoop();				// 位置环控制 得到速度
 			_MotorDJI_SpeedLoop();			// 速度环控制 得到电流
 		}
+		else if (mode == ADRC_Pos_Control)
+		{
+			_MotorDJI_ADRCPosLoop();				// 位置环控制 得到速度
+		}
 	}
 	else
 	{
@@ -227,11 +243,15 @@ void MotorDJI::_MotorDJI_SpeedLoop()
 	moto_measure_t *ptr = &measure;
 
 	// 计算目标的 速度PID输出（输出为电流）
-	float targ_current_temp = speed_pid.Calc(targ_speed, kalman_rpm, _current_limit);
+	// float targ_current_temp = speed_pid.Calc(targ_speed, kalman_rpm, _current_limit);
+
+	float targ_current_temp = motor_adrc.Calc(targ_speed * (2.0f * 3.1415926f) / (60.0f), ptr->total_angle / (8192.0f) * (2.0f * 3.1415926f));
+	targ_current_temp = targ_current_temp * 16384.0f / 20.0f; // 转换为电流指令值（3508将-20A~20A映射到了-16384~16384）
 
 	// 限制爬坡率
 	float delta_current = targ_current_temp - targ_current;
-	float slope_value = _sloperate * speed_pid.GetDt();
+	// float slope_value = _sloperate * speed_pid.GetDt();
+	float slope_value = _sloperate * 0.001f;
 
 	if (delta_current > slope_value)
 	{
@@ -264,6 +284,52 @@ void MotorDJI::_MotorDJI_PosLoop()
 	// 最终速度限幅
 	Lim_ABS(targ_speed, _speed_limit)
 }
+
+
+
+/**
+ * @name C620 / C610 速度环控制
+ * @details 计算RPM对应的控制电流
+ */
+void MotorDJI::_MotorDJI_ADRCPosLoop()
+{
+	// 获取测量结构体
+	moto_measure_t *ptr = &measure;
+
+	// 计算目标的当前位置（国际单位制）
+	int total_angle_code = ptr->total_angle;
+	float total_angle_rad = total_angle_code / 8192.0f * (2.0f * 3.1415926f);
+
+	// 输入三阶ADRC，计算目标电流
+	float targ_current_temp = motor_adrc.Calc(targ_position / 8192.0f * (2.0f * 3.1415926f), total_angle_rad);
+	targ_current_temp = targ_current_temp * 16384.0f / 20.0f; // 转换为电流指令值（3508将-20A~20A映射到了-16384~16384）
+
+	// 限制爬坡率
+	float delta_current = targ_current_temp - targ_current;
+	// float slope_value = _sloperate * speed_pid.GetDt();
+	float slope_value = _sloperate * 0.001f;
+
+	if (delta_current > slope_value)
+	{
+		targ_current += slope_value;
+	}
+	else if (delta_current < -slope_value)
+	{
+		targ_current -= slope_value;
+	}
+	else
+	{
+		targ_current = targ_current_temp;
+	}
+
+	// 最终电流限幅
+	Lim_ABS(targ_current, _current_limit)
+
+	// 记录历史电流值，用于系统延时补偿
+	history_current[history_index++] = targ_current;
+	if (history_index >= 5) history_index = 0;
+}
+
 
 
 /**
@@ -327,14 +393,37 @@ void _MotorDJI_DecodeMeasure(MotorDJI* motor_p, uint8_t *Data)
 	motor_p->_recv_freq = motor_p->_recv_sum_interval > 0 ?(10000.0f / (motor_p->_recv_sum_interval / 10.0f)) : 0.0f;
 
 	// 计算卡尔曼观测器
-	// 输入为电流，单位A（3508将-20A~20A映射到了-8192~8192）
-	float current_A = motor_p->targ_current / 8192.0f * 20.0f;
+	// 输入为电流，单位A（3508将-20A~20A映射到了-16384 ~ 16384）
+	float current_A = motor_p->_GetDelayedCurrent(0) / 16384.0f * 20.0f;
 	// 观测变量为total_angle，但其单位为SI制的rad
 	float angle_rad = motor_p->measure.total_angle / 8192.0f * 2.0f * 3.1415926f;
 
-	motor_p->kalman_ob.Observe({current_A}, {angle_rad});
+	// 观测器输入修正，消除摩擦力影响
+	float predict_fric = motor_p->motor_adrc.fric_comp.GetSimpleFriction(motor_p->motor_adrc.leso.z2);
+	// 摩擦力与速度方向相反，可以直接相加，同时，摩擦力不可能导致电机变号
+	if (current_A > 0)
+	{
+		current_A -= predict_fric;
+		if (current_A < 0) current_A = 0;
+	}
+	else if (current_A < 0)
+	{
+		current_A += predict_fric;
+		if (current_A > 0) current_A = 0;
+	}
 
-	motor_p->kalman_rpm = motor_p->kalman_ob.x(1, 0) * 60.0f / (2.0f * 3.1415926f); // 转换为rpm
+	
+
+	if (motor_p->motor_adrc.ob_t == MotorADRC::KF)
+	{
+		motor_p->motor_adrc.kalman_ob.Observe({current_A}, {angle_rad});
+		motor_p->kalman_rpm = motor_p->motor_adrc.kalman_ob.x(1, 0) * 60.0f / (2.0f * 3.1415926f); // 转换为rpm
+	}
+	else
+	{
+		motor_p->motor_adrc.leso.Observe(current_A, angle_rad);
+		motor_p->kalman_rpm = motor_p->motor_adrc.leso.z2 * 60.0f / (2.0f * 3.1415926f); // 转换为rpm
+	}
 }
 
 

@@ -20,10 +20,10 @@ void Action_of_Dege(StateCore* core);
 MotorDJI test_motor_0;
 
 float K_t = 0.01562f; // 转矩常数
-float J = 0.000425f; // 转动惯量
-float dt = 0.002f; // 采样时间间隔
+float J = 3.1e-5f;  // 转动惯量
+float dt = 0.001f; // 采样时间间隔
 float B = 1.56e-4f; // 阻尼系数
-
+// float B = 0.0f; // 阻尼系数
 
 /**
  * @brief 程序主入口
@@ -36,26 +36,19 @@ void MainFrameCpp()
     // 向状态机核心注册
     core.RegistGraph(example_graph);
 
-    test_motor_0.Init(&hcan1, 1, Speed_Control);
+    test_motor_0.Init(&hcan1, 1, ADRC_Pos_Control);
 
-    // 配置扩张状态卡尔曼观测器（扩张T_L）
-    test_motor_0.kalman_ob.F = {1.0f, dt, 0.0f,
-                                0.0f, 1.0f - (B / J * dt), -(1 / J * dt),
-                                0.0f, 0.0f, 1.0f};
-
-    test_motor_0.kalman_ob.G = {0.0f, K_t / J * dt, 0.0f};
-
-    test_motor_0.kalman_ob.H = {1.0f, 0.0f, 0.0f};
-
-    test_motor_0.kalman_ob.Q = {1e-5f, 0.0f, 0.0f,
-                                 0.0f, 0.5f, 0.0f,
-                                 0.0f, 0.0f, 10.0f};
-
-    test_motor_0.kalman_ob.R = {1e-5f};
+    // test_motor_0.motor_adrc.InitKF(J, B, K_t, dt, 10.0f);
+    // test_motor_0.motor_adrc.InitLESO(80.0f, J, B, K_t, dt, 15.0f);
+    test_motor_0.motor_adrc.InitLESO_POS(80.0f, 18.8f, J, B, K_t, dt, 15.0f);
+    // test_motor_0.speed_pid.Init(0.015f, 0.0f, 0.0f, 0.0f);
     
     // 配置跟踪器
-    monit.Track(test_motor_0.measure.speed_rpm);
-    monit.Track(test_motor_0.kalman_rpm); // 卡尔曼估计的速度，rad/s转rpm  
+    monit.Track(test_motor_0.motor_adrc.debug_ltd_targ_omega);
+    monit.Track(test_motor_0.motor_adrc.debug_omega);               // 卡尔曼估计的速度，rad/s转rpm  
+    // monit.Track(test_motor_0.motor_adrc.debug_TL);
+    monit.Track(test_motor_0.motor_adrc.debug_ltd_targ_pos);
+    monit.Track(test_motor_0.measure.total_angle);
     monit.Perflize();  // 切换高性能模式
 }
 
