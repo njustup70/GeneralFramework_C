@@ -383,6 +383,8 @@ public:
 
     float _base_omega_o = 30.0f; // 基础观测器带宽 (rad/s)
 
+    LowPassFilter eta_filt;
+
     /**
      * @brief 初始化 ESO
      * @param _omega_o 观测器带宽 (rad/s)。越大越硬，但也越吵。建议从 100~300 开始尝试。
@@ -398,6 +400,8 @@ public:
         // 这是将电流(A)转换为角加速度(rad/s^2)的系数
         b0 = _Kt / _J;
         _base_omega_o = _omega_o;
+
+        eta_filt.InitHz(8.0f, dt); 
 
         // 根据带宽计算 ESO 增益 (极点配置在 -omega_o)
         // L = [3wo, 3wo^2, wo^3]
@@ -452,6 +456,7 @@ public:
 
         // z3_dot = -beta3 * e
         // z3 += (-beta3 * e) * dt;
+        float eta_f = eta_filt.Filter(GetDynamicEta(e, 0.8f));
         z3 += (-beta3 * e - eta * z3) * dt;
     }
 
@@ -462,12 +467,29 @@ public:
         return z3 * J;
     }
 
+    float GetDynamicEta(float error, float wc)
+    {
+        if (fabs(error) >= wc)
+        {
+            return 0.0f;
+        }
+        else if (fabs(error) > 0)
+        {
+            return eta * (1.001f - fabs(error) / wc);
+        }
+        else
+        {
+            return eta;
+        }
+            
+    }
+
     float beta1, beta2, beta3; // 观测器增益
     float b0; // 系统增益
     float J;  // 惯量
     float dt; // 周期
 
-    float eta = 0.05f; // 衰减系数
+    float eta = 0.024f; // 衰减系数
 };
 
 
@@ -594,7 +616,7 @@ public:
 
         fric_comp.Init(0.25f, 0.05f, 40.0f, 120.0f);
 
-        // square_injector.InitHz(0.45f, 200.0f);
+        square_injector.InitHz(0.15f, 200.0f);
 
         ob_t = LESO_POS; // 默认为位置模式，如果是速度模式需单独覆盖
     }
@@ -718,7 +740,7 @@ public:
 
 
         // 方波注入
-        // i_des += square_injector.AutoGetValue();
+        i_des += square_injector.AutoGetValue();
         
         // 6. 限幅
         if (i_des > max_current) i_des = max_current;
