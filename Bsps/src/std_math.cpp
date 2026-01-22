@@ -144,3 +144,9 @@ float Limit_ABS(float targ_num, float limit_mx)
     }
     return targ_num;
 }
+
+
+float StdMath::RpmToRadS(float rpm)
+{
+    return rpm * (2.0f * 3.1415926f) / 60.0f;
+}

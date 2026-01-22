@@ -208,4 +208,10 @@ typedef struct ShootInfo
 */
 float Limit_ABS(float targ_num, float limit_mx);
 
+namespace StdMath
+{
+    float RpmToRadS(float rpm);
+}
+
+
 #endif

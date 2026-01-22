@@ -43,6 +43,8 @@ void MotorDJI::Init(CAN_HandleTypeDef *hcan, uint8_t motorESC_id, MotorDJIMode d
 	
 	mode = djimode; // 设置控制模式
 	
+	square_injector_.InitHz(40000.0f, 0.4f); 		// 方波激励器初始化，幅值20000位置单位，频率0.2Hz
+
 	/// @brief 根据电机 ID 和 CAN路线，将其存储到全局的电机实例列表中，同时顺序记录其ID
 	/// 一般一根CAN总线上最多有8个电机，所以CAN1分配到1-8号电机，CAN2分配到9-16号电机
 	if (motorESC_id <= 8 && motorESC_id >= 1)
@@ -223,6 +225,31 @@ int16_t MotorDJI::Control()
 		{
 			_MotorDJI_ADRCPosLoop();				// 位置环控制 得到速度
 		}
+		else if (mode == Identification_Mode)
+		{
+			// 惯量辨识模式
+
+			// 先利用方波激励器产生激励位置
+			targ_position = square_injector_.AutoGetValue(); // 获取当前方波激励值
+
+			// 每0.33s更新一次ADRC的参数b_0
+			static float last_update_tick = DWT_GetTimeline_Sec();
+			float current_tick = DWT_GetTimeline_Sec();
+			if (current_tick - last_update_tick >= 0.33f)
+			{
+				float new_J = 0.9f * motor_adrc.J + 0.1f * g_Identifier.J_hat_;
+
+				motor_adrc.J = new_J; 										// 更新ADRC的b0参数
+				motor_adrc.input_nltd_3rd.ResetR((motor_adrc.Kt * motor_adrc.max_current - motor_adrc.B - 0.1f) / motor_adrc.J);
+				motor_adrc.eso.b0 = motor_adrc.Kt / motor_adrc.J;
+
+				g_Identifier.b0_ = motor_adrc.eso.b0;			// 更新辨识器的b0参数
+				last_update_tick = current_tick;
+			}
+
+
+			_MotorDJI_ADRCPosLoop();			// 位置环控制 得到电流
+		}
 	}
 	else
 	{
@@ -268,6 +295,10 @@ void MotorDJI::_MotorDJI_SpeedLoop()
 
 	// 最终电流限幅
 	Lim_ABS(targ_current, _current_limit)
+
+	// 记录历史电流值，用于系统延时补偿
+	history_current[history_index++] = targ_current;
+	if (history_index >= 5) history_index = 0;
 }
 
 /**
@@ -392,38 +423,25 @@ void _MotorDJI_DecodeMeasure(MotorDJI* motor_p, uint8_t *Data)
 	// 计算平均接收时间间隔和频率
 	motor_p->_recv_freq = motor_p->_recv_sum_interval > 0 ?(10000.0f / (motor_p->_recv_sum_interval / 10.0f)) : 0.0f;
 
-	// 计算卡尔曼观测器
+
+	/*			电机状态观测			*/
 	// 输入为电流，单位A（3508将-20A~20A映射到了-16384 ~ 16384）
-	float current_A = motor_p->_GetDelayedCurrent(0) / 16384.0f * 20.0f;
-	// 观测变量为total_angle，但其单位为SI制的rad
+	float current_ampero = motor_p->_GetDelayedCurrent(0) / 16384.0f * 20.0f;
+	
+	// 观测变量为total_angle，但其单位为SI的rad
 	float angle_rad = motor_p->measure.total_angle / 8192.0f * 2.0f * 3.1415926f;
 
-	// 观测器输入修正，消除摩擦力影响
-	float predict_fric = motor_p->motor_adrc.fric_comp.GetSimpleFriction(motor_p->motor_adrc.leso.z2);
-	// 摩擦力与速度方向相反，可以直接相加，同时，摩擦力不可能导致电机变号
-	if (current_A > 0)
-	{
-		current_A -= predict_fric;
-		if (current_A < 0) current_A = 0;
-	}
-	else if (current_A < 0)
-	{
-		current_A += predict_fric;
-		if (current_A > 0) current_A = 0;
-	}
+	// 输入数据到观测器
+	motor_p->motor_adrc.Observe(current_ampero, angle_rad);
 
-	
 
-	if (motor_p->motor_adrc.ob_t == MotorADRC::KF)
-	{
-		motor_p->motor_adrc.kalman_ob.Observe({current_A}, {angle_rad});
-		motor_p->kalman_rpm = motor_p->motor_adrc.kalman_ob.x(1, 0) * 60.0f / (2.0f * 3.1415926f); // 转换为rpm
-	}
-	else
-	{
-		motor_p->motor_adrc.leso.Observe(current_A, angle_rad);
-		motor_p->kalman_rpm = motor_p->motor_adrc.leso.z2 * 60.0f / (2.0f * 3.1415926f); // 转换为rpm
-	}
+	// 获取系统当前状态
+    float r_cmd = motor_p->motor_adrc.input_nltd_3rd.v2; 		// 你的速度指令
+    float u_out = current_ampero ; 							// ADRC输出的 u (电流/转矩)
+    float z3    = motor_p->motor_adrc.eso.z3;        						// ESO观测到的扰动
+
+    // 3. 喂数据给算法
+    motor_p->g_Identifier.Update(r_cmd, u_out, z3);
 }
 
 

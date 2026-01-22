@@ -12,7 +12,7 @@
 #include "stm32f4xx_hal.h"
 #include "bsp_can.h"
 #include "pids.hpp"
-#include "controller.hpp"
+#include "adrc.hpp"
 
 #define ABS(x) ((x > 0) ? (x) : (-x))
 #define Lim_ABS(x, y) \
@@ -45,6 +45,7 @@ typedef enum
 	Speed_Control,
 	None_Control,
 	ADRC_Pos_Control,
+	Identification_Mode,
 }MotorDJIMode;
 
 
@@ -59,7 +60,7 @@ private:
 	bool _online_priv = false;
 	int _online_cnt = 0; 
 	/// @brief 电流限幅		
-	uint16_t _current_limit = 13200;
+	uint16_t _current_limit = 14800;
 	/// @brief 速度限幅 	(减速比前的RPM)
 	uint16_t _speed_limit = 20000;
 	/// @brief 爬坡率限制	(单位：current/s)
@@ -140,10 +141,16 @@ public:
 
 
 	/**		测试用		**/
-	KalmanObserver<1, 3, 1> kalman_ob;		// 卡尔曼观测器
-	float kalman_rpm = 0.0f;				// 卡尔曼观测器估计的转速
+	// KalmanObserver<1, 3, 1> kalman_ob;		// 卡尔曼观测器
+	// float kalman_rpm = 0.0f;				// 卡尔曼观测器估计的转速
 
-	MotorADRC motor_adrc;			// 电机用的 ADRC 控制器	
+	ADRC motor_adrc;			// 电机用的 ADRC 控制器	
+
+
+	// 假设 b0 = 100, 采样率 1000Hz, 高通截止 2Hz, 记忆时间 2.0秒
+	IVIdentifier g_Identifier = IVIdentifier(19.62, 1000.0f, 2.0f, 1.0f);	// 惯量辨识器
+
+	SquareInjector square_injector_; // 方波激励器
 };
 
 namespace MotorDJIConst

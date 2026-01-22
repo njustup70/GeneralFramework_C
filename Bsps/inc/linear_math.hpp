@@ -1,6 +1,7 @@
 #pragma once
 #include "stm32f4xx_hal.h"
 #include "arm_math.h"
+#include "std_math.hpp"
 #include <initializer_list>
 
 // 确保定义 CMSIS DSP 宏，如果项目中未定义，需要在此处或者工程设置中定义

@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Middlewares/ST/ARM/DSP/Inc;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Bsps/src;../Bsps/inc;../Apps/src;../Apps/inc;../Mods/inc;../Mods/src;../Sys/inc;../Sys/src</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Middlewares/ST/ARM/DSP/Inc;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Bsps/src;../Bsps/inc;../Apps/src;../Apps/inc;../Mods/inc;../Mods/src;../Sys/inc;../Sys/src;..\Mods\experimental</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -1051,6 +1051,11 @@
               <FileType>8</FileType>
               <FilePath>..\Mods\src\controller.cpp</FilePath>
             </File>
+            <File>
+              <FileName>adrc.cpp</FileName>
+              <FileType>8</FileType>
+              <FilePath>..\Mods\experimental\adrc.cpp</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -1097,9 +1102,6 @@
               <FilePath>..\Apps\src\MainFrame.cpp</FilePath>
             </File>
           </Files>
-        </Group>
-        <Group>
-          <GroupName>::CMSIS</GroupName>
         </Group>
         <Group>
           <GroupName>Middlewares/Library/DSP Library/DSP Library</GroupName>
@@ -1198,6 +1200,9 @@
               </FileOption>
             </File>
           </Files>
+        </Group>
+        <Group>
+          <GroupName>::CMSIS</GroupName>
         </Group>
       </Groups>
     </Target>
