@@ -12,18 +12,6 @@ namespace CtrlUtils
     };
 }
 
-template<uint8_t con_dim, uint8_t state_dim, uint8_t meas_dim>
-class StateSpaceModel
-{
-    Matrix<state_dim, 1> x;     // 状态向量
-    Matrix<meas_dim, 1> y;      // 测量向量
-    Matrix<con_dim, 1> u;       // 控制输入向量
-
-    Matrix<state_dim, state_dim> A;         // 状态转移矩阵
-    Matrix<state_dim, con_dim> B;           // 输入矩阵
-    Matrix<meas_dim, state_dim> C;          // 观测矩阵
-};
-
 /**
  * @brief 线性化的微分跟踪器
  * @name Lineared Time Differentiator (Linear TD)

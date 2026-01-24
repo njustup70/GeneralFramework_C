@@ -1,16 +1,15 @@
 #include "controller.hpp"
 
 // 构造函数初始化
-IVIdentifier::IVIdentifier(float b0_nominal, float fs, float cut_freq, float forget_time)
-    : b0_(b0_nominal) 
+IVIdentifier::IVIdentifier(float b0_nominal, float fs, float cut_freq, float forget_time) : b0_(b0_nominal) 
 {
-    // 1. 计算高通滤波系数 alpha = 1 / (1 + 2*pi*fc*dt)
+    // 计算高通滤波系数 alpha = 1 / (1 + 2*pi*fc*dt)
     // 实际上离散形式常用: alpha = rc / (rc + dt)
     float dt = 1.0f / fs;
     float rc = 1.0f / (2.0f * 3.1415926f * cut_freq);
     hpf_alpha_ = rc / (rc + dt);
 
-    // 2. 计算遗忘因子 lambda
+    // 计算遗忘因子 lambda
     // 记忆时间 T = 1 / (1 - lambda) * dt  => lambda = 1 - dt/T
     // 例如 T=1s, dt=0.001s -> lambda = 0.999
     if (forget_time < 0.01f) forget_time = 0.01f; // 保护
