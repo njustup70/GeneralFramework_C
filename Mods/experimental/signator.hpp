@@ -96,6 +96,35 @@ public:
     float Filter(float input);
 };
 
+/**
+ * @brief 一阶高通滤波器 (High Pass Filter)
+ * @note 高通滤波器可以去除信号中的直流分量（就是把信号的均值变为0）
+ */
+class HighPassFilter
+{
+public:
+    float alpha = 0.0f;             // 滤波系数
+    float prev_input = 0.0f;        // 上一次输入 x[k-1]
+    float prev_output = 0.0f;       // 上一次输出 y[k-1]
+
+    /**
+     * @brief 初始化高通滤波器
+     * @param cutoff_freq_hz 截止频率 (Hz)
+     * @param dt 采样周期 (s)
+     */
+    void Init(float cutoff_freq_hz, float dt);
+
+    /**
+     * @brief 执行高通滤波
+     * @param input 当前输入
+     * @return 滤波后输出
+     */
+    float Filter(float input);
+    
+    // 重置状态
+    void Reset() { prev_input = 0.0f; prev_output = 0.0f; }
+};
+
 
 /**
  * @brief 摩擦补偿器
@@ -110,104 +139,34 @@ class FrictionCompensator
     float vel_transition_start = 0.0f;      // 速度过渡起点 (rad/s)
     float vel_transition_end = 0.0f;        // 速度过渡终点 (rad/s)
 
-    LowPassFilter lpf_fric;     // 限制补偿带宽，放置补偿突变，把ESO干爆
+    /// @brief 限制补偿带宽，防止补偿突变，把ESO干爆
+    LowPassFilter lpf_fric;
     
-    void Init(float F_static, float F_dynamic, float V_tran_start, float V_tran_end)
-    {
-        fric_static = F_static;
-        fric_dynamic = F_dynamic;
-        vel_transition_start = V_tran_start;
-        vel_transition_end = V_tran_end;
-        lpf_fric.Init(5.0f, 0.001f);   // 截止频率12rad/s，周期1ms   
-    }
+    /**
+     * @brief 初始化摩擦补偿器参数
+     * @param F_static 静摩擦补偿 (电流：A)
+     * @param F_dynamic 动摩擦补偿 (电流：A)
+     * @param V_tran_start 速度过渡起点 (rad/s)
+     * @param V_tran_end 速度过渡终点 (rad/s)
+     */
+    void Init(float F_static, float F_dynamic, float V_tran_start, float V_tran_end);
 
     /**
      * @brief 根据摩擦力模型，获得当前的摩擦力大小
-     * @note 用于补偿ESO的模型输入
+     * @note 可以用于补偿ESO的模型输入
      */
-    float GetFriction(float v_real)
-    {
-        // 不再需要判断意图，只试图恢复真实物理世界的摩擦力
-        float i_total = 0.0f;
+    float GetFriction(float v_real);
 
-        // 若速度很快，直接使用动摩擦补偿
-        if (fabs(v_real) > vel_transition_end)
-        {
-            // 根据符号判定，摩擦力与速度方向相反
-            i_total = -fric_dynamic * StdMath::signf(v_real);
-        }
-        // 速度在过渡区间，线性插值
-        else if (fabs(v_real) > vel_transition_start)
-        {
-            // 计算线性比
-            float ratio = (fabs(v_real) - vel_transition_start) / (vel_transition_end - vel_transition_start);
-            // 根据符号判定，摩擦力与速度方向相反
-            i_total = -(fric_static + (fric_dynamic - fric_static) * ratio) * StdMath::signf(v_real);
-        }
-        // 速度很小，使用静摩擦补偿
-        else
-        {
-            i_total = -fric_static * StdMath::signf(v_real);
-        }
-
-        return i_total;
-    }
-
-    float GetSimpleFriction(float v_real)
-    {
-        // 简单模型：只有静摩擦补偿
-        float i_total = 0.0f;
-
-        // 使用静摩擦补偿
-        i_total = -fric_static * StdMath::signf(v_real) * 0.75f;
-
-        return i_total;
-    }
+    /**
+     * @brief 简化的摩擦力模型
+     * @note 只有静摩擦补偿，会瞬间阶跃变号，用于快速估算
+     */
+    float GetSimpleFriction(float v_real);
 
     /**
      * @brief 根据真实速度和意图，计算摩擦补偿电流
      */
-    float Get_Compensation(float real_u, float real_velo)
-    {
-        // 构造一个p，表示控制器的能量意图；当p > 0，系统希望加速；反之希望刹车
-        float p = real_u * real_velo;
-        
-        float i_total = 0.0f;
-
-        // 当系统希望加速时，使用正向摩擦补偿
-        if (p > 0 && fabs(real_u) > 0.25f)
-        {
-            // 若速度很快，直接使用动摩擦补偿
-            if (fabs(real_velo) > vel_transition_end)
-            {
-                // 根据符号补偿
-                i_total = fric_dynamic * StdMath::signf(real_velo);
-            }
-            // 速度在过渡区间，线性插值
-            else if (fabs(real_velo) > vel_transition_start)
-            {
-                // 计算线性比
-                float ratio = (fabs(real_velo) - vel_transition_start) / (vel_transition_end - vel_transition_start);
-                // 根据符号补偿
-                i_total = (fric_static + (fric_dynamic - fric_static) * ratio) * StdMath::signf(real_velo);
-            }
-            // 速度很小，使用静摩擦补偿
-            else
-            {
-                i_total = fric_static * StdMath::signf(real_velo);
-            }
-        }
-        // 当系统希望能量减小，或不变时，实际上摩擦力在帮忙刹车，不进行补偿
-        else
-        {
-            i_total = 0.0f;
-        }
-        
-        // 低通滤波，防止突变
-        i_total = lpf_fric.Filter(i_total);
-
-        return i_total;
-    };
+    float Get_Compensation(float real_u, float real_velo);
 };
 
 /**
@@ -220,39 +179,21 @@ class SquareInjector
     float amplitude = 0.0f;     // 方波幅值
     float period = 1.0f;        // 方波周期 (s)
 
-    void Init(float amp, float per)
-    {
-        amplitude = amp;
-        period = per;
-    }
+    void Init(float amp, float per);
 
-    void InitHz(float amp, float freq_hz)
-    {
-        amplitude = amp;
-        period = 1.0f / freq_hz;
-    }
+    void InitHz(float amp, float freq_hz);
 
-    float GetValue(float time_sec)
-    {
-        float phase = fmod(time_sec, period);
-        if (phase < (period / 2.0f))
-        {
-            return amplitude;
-        }
-        else
-        {
-            return -amplitude;
-        }
-    }
+    float GetValue(float time_sec);
 
-    float AutoGetValue()
-    {
-        static float start_time = DWT_GetTimeline_Sec();
-        float current_time = DWT_GetTimeline_Sec();
-        return GetValue(current_time - start_time);
-    }
+    float AutoGetValue();
 };
 
+/**
+ * @brief 卡尔曼观测器
+ * @param con_dim   控制输入维度
+ * @param state_dim 状态向量维度
+ * @param meas_dim  观测向量维度
+ */
 template<uint8_t con_dim, uint8_t state_dim, uint8_t meas_dim>
 class KalmanObserver
 {
@@ -326,14 +267,15 @@ class KalmanObserver
 };
 
 
-class IVIdentifier {
+class IVIdentifier
+{
 public:
     /**
      * @brief 构造函数
      * @param b0_nominal  ADRC控制器当前设置的b0值
      * @param fs          采样频率 (Hz)，例如 1000
-     * @param cut_freq    高通滤波截止频率 (Hz)，用于去直流，建议 1.0 - 5.0
-     * @param forget_time 协方差统计的"记忆时间" (秒)，建议 0.5 - 2.0
+     * @param cut_freq    高通滤波截止频率 (Hz)，用于去直流
+     * @param forget_time 协方差统计的"记忆时间" (秒)
      */
     IVIdentifier(float b0_nominal, float fs, float cut_freq, float forget_time);
 
@@ -359,32 +301,24 @@ public:
 
     // 参数
     float b0_;
-    float lambda_;       // 遗忘因子 (0 < lambda < 1)
-    float hpf_alpha_;    // 高通滤波器系数
+    float lambda_;                  // 遗忘因子 (0 < lambda < 1)
+    float hpf_alpha_;               // 高通滤波器系数
     
     // 状态变量
-    float theta_iv;     // 最终辨识参数
-    float theta_iv_accum_; // 累计和，用于计算平均值
-    float cov_cross;      // 分子累加器 (Cov(r, z3))
-    float cov_self;      // 分母累加器 (Cov(r, u))
+    float theta_iv;                 // 最终辨识参数
+    float theta_iv_accum_;          // 累计和，用于计算平均值
+    float cov_cross;                // 分子累加器 (Cov(r, z3))
+    float cov_self;                 // 分母累加器 (Cov(r, u))
 
-    float Kt_ = 0.01562;          // 转矩常数 (用于计算J)
-    float J_hat_ = 0.0f;        // 估计的惯量
+    float Kt_ = 0.01562;            // 转矩常数
+    float J_hat_ = 0.0f;            // 估计的惯量
 
     float r_ac;
     float u_ac;
     float z3_ac;
 
-    // 高通滤波器历史状态 (用于去均值)
-    float last_r_in_, last_r_out_;
-    float last_u_in_, last_u_out_;
-    float last_z3_in_, last_z3_out_;
-
-    // 辅助函数：一阶高通滤波
-    float HighPassFilter(float input, float& last_in, float& last_out);
+    // 使用封装好的高通滤波器对象
+    HighPassFilter hpf_r_;
+    HighPassFilter hpf_u_;
+    HighPassFilter hpf_z3_;
 };
-
-
-
-
-

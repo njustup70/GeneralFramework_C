@@ -1,5 +1,7 @@
 #include "signator.hpp"
-/******************     二阶TD      ******************/
+
+/*************************************     二阶TD      *************************************/
+
 void LinearTD_2nd::Init(float _r, float _dt)
 {
     r = _r;
@@ -12,17 +14,17 @@ void LinearTD_2nd::Update(float target_input)
 {
     // 误差
     float error = v1 - target_input;
-    
+
     // 计算期望加速度，一般是按临界阻尼配置
     float acc = -r * r * error - 2.0f * r * v2;
-    
+
     // 欧拉积分更新
     v1 += v2 * dt;
     v2 += acc * dt;
 }
 
+/*************************************     三阶TD      *************************************/
 
-/******************     三阶TD      ******************/
 void LinearTD_3rd::Init(float _r, float _dt, float _max_v, float _max_a)
 {
     r = _r;
@@ -37,15 +39,15 @@ void LinearTD_3rd::Init(float _r, float _dt, float _max_v, float _max_a)
 void LinearTD_3rd::Update(float target_input)
 {
     float error = v1 - target_input;
-    
+
     // 计算加加速度
-    float jerk = -r*r*r * error - 3.0f*r*r * v2 - 3.0f*r * v3;
-    
+    float jerk = -r * r * r * error - 3.0f * r * r * v2 - 3.0f * r * v3;
+
     // 积分更新加速度 v3
     v3 += jerk * dt;
 
     // 限制加速度
-    v3 = StdMath::fclamp(v3, max_a); 
+    v3 = StdMath::fclamp(v3, max_a);
 
     // 积分更新速度 v2
     v2 += v3 * dt;
@@ -57,10 +59,9 @@ void LinearTD_3rd::Update(float target_input)
     v1 += v2 * dt;
 }
 
+/*************************************     一阶低通滤波器      *************************************/
 
-
-/******************     一阶低通滤波器      ******************/
-void LowPassFilter::Init(float cutoff_freq_rad, float dt)      // 这个的截止频率是以 rad/s 为单位的
+void LowPassFilter::Init(float cutoff_freq_rad, float dt) // 这个的截止频率是以 rad/s 为单位的
 {
     // 计算环节时间常数
     float time_const = 1.0f / cutoff_freq_rad;
@@ -69,9 +70,11 @@ void LowPassFilter::Init(float cutoff_freq_rad, float dt)      // 这个的截�
     alpha = dt / (time_const + dt);
 }
 
-void LowPassFilter::InitHz(float cutoff_freq_hz, float dt)      // 这个的截止频率是以 Hz 为单位的
+void LowPassFilter::InitHz(float cutoff_freq_hz, float dt) // 这个的截止频率是以 Hz 为单位的
 {
-    float omega_c = 2 * PI * cutoff_freq_hz;  // Hz转rad/s
+    float omega_c = 2 * PI * cutoff_freq_hz; // Hz转rad/s
+
+    // 同上
     float time_const = 1.0f / omega_c;
     alpha = dt / (time_const + dt);
 }
@@ -84,24 +87,167 @@ float LowPassFilter::Filter(float input)
     return y;
 }
 
+/*************************************     一阶高通滤波器      *************************************/
+
+void HighPassFilter::Init(float cutoff_freq_hz, float dt)
+{
+    // 先计算环节的时间常数
+    float time_const = 1.0f / (2.0f * 3.1415926f * cutoff_freq_hz);
+
+    // 计算滤波系数
+    alpha = time_const / (time_const + dt);
+    
+    Reset();
+}
+
+float HighPassFilter::Filter(float input)
+{
+    // 计算一阶高通滤波输出
+    float output = alpha * (prev_output + input - prev_input);
+    
+    prev_input = input;
+    prev_output = output;
+    
+    return output;
+}
+
+/*************************************     摩擦力补偿器      *************************************/
+
+void FrictionCompensator::Init(float F_static, float F_dynamic, float V_tran_start, float V_tran_end)
+{
+    fric_static = F_static;
+    fric_dynamic = F_dynamic;
+    vel_transition_start = V_tran_start;
+    vel_transition_end = V_tran_end;
+
+    // 截止频率12rad/s，周期1ms
+    lpf_fric.Init(5.0f, 0.001f); 
+}
+
+float FrictionCompensator::GetFriction(float v_real)
+{
+    // 不再需要判断意图，只试图恢复真实物理世界的摩擦力
+    float i_total = 0.0f;
+
+    // 若速度很快，直接使用动摩擦补偿
+    if (fabs(v_real) > vel_transition_end)
+    {
+        // 根据符号判定，摩擦力与速度方向相反
+        i_total = -fric_dynamic * StdMath::signf(v_real);
+    }
+
+    // 速度在过渡区间，线性插值
+    else if (fabs(v_real) > vel_transition_start)
+    {
+        // 计算线性比
+        float ratio = (fabs(v_real) - vel_transition_start) / (vel_transition_end - vel_transition_start);
+        // 根据符号判定，摩擦力与速度方向相反
+        i_total = -(fric_static + (fric_dynamic - fric_static) * ratio) * StdMath::signf(v_real);
+    }
+    
+    // 速度很小，使用静摩擦补偿
+    else
+    {
+        i_total = -fric_static * StdMath::signf(v_real);
+    }
+
+    return i_total;
+}
+
+float FrictionCompensator::GetSimpleFriction(float v_real)
+{
+    // 简单模型：只有静摩擦补偿
+    float i_total = 0.0f;
+
+    // 使用静摩擦补偿
+    i_total = -fric_static * StdMath::signf(v_real) * 0.75f;
+
+    return i_total;
+}
+
+float FrictionCompensator::Get_Compensation(float real_u, float real_velo)
+{
+    // 构造一个p，表示控制器的能量意图；当p > 0，系统希望加速；反之希望刹车
+    float p = real_u * real_velo;
+    
+    float i_total = 0.0f;
+
+    // 当系统希望加速时，使用正向摩擦补偿
+    if (p > 0 && fabs(real_u) > 0.25f)
+    {
+        // 若速度很快，直接使用动摩擦补偿
+        if (fabs(real_velo) > vel_transition_end)
+        {
+            // 根据符号补偿
+            i_total = fric_dynamic * StdMath::signf(real_velo);
+        }
+        // 速度在过渡区间，线性插值
+        else if (fabs(real_velo) > vel_transition_start)
+        {
+            // 计算线性比
+            float ratio = (fabs(real_velo) - vel_transition_start) / (vel_transition_end - vel_transition_start);
+            // 根据符号补偿
+            i_total = (fric_static + (fric_dynamic - fric_static) * ratio) * StdMath::signf(real_velo);
+        }
+        // 速度很小，使用静摩擦补偿
+        else
+        {
+            i_total = fric_static * StdMath::signf(real_velo);
+        }
+    }
+    // 当系统希望能量减小，或不变时，实际上摩擦力在帮忙刹车，不进行补偿
+    else
+    {
+        i_total = 0.0f;
+    }
+    
+    // 低通滤波，防止突变
+    i_total = lpf_fric.Filter(i_total);
+
+    return i_total;
+};
+
+/*************************************     方波发生器      *************************************/
+
+void SquareInjector::Init(float amp, float per)
+{
+    amplitude = amp;
+    period = per;
+}
+
+void SquareInjector::InitHz(float amp, float freq_hz)
+{
+    amplitude = amp;
+    period = 1.0f / freq_hz;
+}
+
+float SquareInjector::GetValue(float time_sec)
+{
+    float phase = fmod(time_sec, period);
+    if (phase < (period / 2.0f))
+    {
+        return amplitude;
+    }
+    else
+    {
+        return -amplitude;
+    }
+}
+
+float SquareInjector::AutoGetValue()
+{
+    static float start_time = DWT_GetTimeline_Sec();
+    float current_time = DWT_GetTimeline_Sec();
+    return GetValue(current_time - start_time);
+}
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
+/*************************************     IV辨识器      *************************************/ 
 
 // 构造函数初始化
-IVIdentifier::IVIdentifier(float b0_nominal, float fs, float cut_freq, float forget_time) : b0_(b0_nominal) 
+IVIdentifier::IVIdentifier(float b0_nominal, float fs, float cut_freq, float forget_time) : b0_(b0_nominal)
 {
     // 计算高通滤波系数
     float dt = 1.0f / fs;
@@ -109,52 +255,39 @@ IVIdentifier::IVIdentifier(float b0_nominal, float fs, float cut_freq, float for
     hpf_alpha_ = rc / (rc + dt);
 
     // 计算遗忘系数（不能太短）
-    if (forget_time < 0.1f) forget_time = 0.1f;
+    if (forget_time < 0.1f)
+        forget_time = 0.1f;
     lambda_ = 1.0f - (dt / forget_time);
 
     Reset();
 }
 
-void IVIdentifier::Reset() 
+void IVIdentifier::Reset()
 {
     theta_iv = 0.0f;
     cov_cross = 0.0f;
     cov_self = 0.0f;
-    
-    last_r_in_ = 0; last_r_out_ = 0;
-    last_u_in_ = 0; last_u_out_ = 0;
-    last_z3_in_ = 0; last_z3_out_ = 0;
-}
-
-
-float IVIdentifier::HighPassFilter(float input, float& last_in, float& last_out)
-{
-    // 高通滤波器：y[k] = a * (y[k-1] + x[k] - x[k-1])
-    float output = hpf_alpha_ * (last_out + input - last_in);
-    last_in = input;
-    last_out = output;
-    return output;
 }
 
 void IVIdentifier::Update(float r_cmd, float u_ctrl, float z3_obs)
 {
     // 我们首先通过高通滤波获取动态分量，相当于去均值
-    r_ac = HighPassFilter(r_cmd, last_r_in_, last_r_out_);
-    u_ac = HighPassFilter(u_ctrl, last_u_in_, last_u_out_);
-    z3_ac = HighPassFilter(z3_obs, last_z3_in_, last_z3_out_);
+    r_ac = hpf_r_.Filter(r_cmd);
+    u_ac = hpf_u_.Filter(u_ctrl);
+    z3_ac = hpf_z3_.Filter(z3_obs);
 
     // 接着计算相关性矩阵
-    cov_cross = lambda_ * cov_cross + r_ac * z3_ac;       // 互相关矩阵
-    cov_self = lambda_ * cov_self + r_ac * u_ac;        // 自相关矩阵
+    cov_cross = lambda_ * cov_cross + r_ac * z3_ac; // 互相关矩阵
+    cov_self = lambda_ * cov_self + r_ac * u_ac;    // 自相关矩阵
 
     // 为了防止激发模态不足，导致的不可辨识问题，这里利用 参考输入的自相关判断
-    const float CALCULATION_THRES = 650.0f; 
+    const float CALCULATION_THRES = 650.0f;
 
     // 激发模态充分的前提下，计算辨识参数 theta_iv
     if (fabs(cov_self) > CALCULATION_THRES)
     {
         float raw_theta = cov_cross / cov_self;
-        
+
         // 一阶低通滤波防止突变
         theta_iv = 0.99f * theta_iv + 0.01f * raw_theta;
 
@@ -165,18 +298,21 @@ void IVIdentifier::Update(float r_cmd, float u_ctrl, float z3_obs)
     // 计算估计的转动惯量 J_hat_
     float real_b = theta_iv_accum_ + b0_;
 
-    if (real_b < 0.0001f) real_b = 0.0001f;         // 保护数据
+    if (real_b < 0.0001f)
+        real_b = 0.0001f; // 保护数据
     J_hat_ = Kt_ / real_b;
 }
 
-float IVIdentifier::GetEstimatedJ(float Kt) const {
+float IVIdentifier::GetEstimatedJ(float Kt) const
+{
     // 原理: theta = b_real - b0
     // b_real = theta + b0
     // J_real = Kt / b_real
     float b_real = theta_iv + b0_;
-    
+
     // 保护：防止分母为0或负数（惯量不可能是负的）
-    if (b_real < 0.0001f) b_real = 0.0001f; 
-    
+    if (b_real < 0.0001f)
+        b_real = 0.0001f;
+
     return Kt / b_real;
 }
