@@ -95,6 +95,7 @@ void ControlCpp()
     while (1)
     {
         MotorDJI::ControlAllMotors();
+        System.PerformanceRun();
         /***    最大循环频率：1000Hz     ***/
         osDelay(1);     // FreeRTOS的极限，1ms喂狗
     }

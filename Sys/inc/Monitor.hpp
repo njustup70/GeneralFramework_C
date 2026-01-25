@@ -56,9 +56,11 @@ private:
     uint8_t watch_count = 0;
     uint8_t track_count = 0;
 
+    bool high_performance_mode = false;         // 高性能模式标志位（1000Hz跟踪）
+
 public:
-    UartMsgCoder host_coder;   // 发送到上位机的编码器
-    UartMsgCoder farcon_coder; // 发送到遥控器的编码器
+    UartMsgCoder host_coder;                    // 发送到上位机的编码器
+    UartMsgCoder farcon_coder;                  // 发送到遥控器的编码器
 
     /**
      * @brief 监视器的初始化函数
@@ -72,6 +74,9 @@ public:
      * @details 内含发送日志信息、发送机器人状态码、监控维护模块等功能
      */
     void Run();
+
+    /// @brief 切换高性能模式
+    void Perflize();
 
     /// @brief 发送日志
     void Log(const char *format, ...);
@@ -152,6 +157,13 @@ public:
 
     /// @brief 发送跟踪信息
     void LogTrack();
+
+    /**
+     * @brief 发送跟踪信息 (JustFloat格式，极快)
+     * @note 无论由于Track的是什么类型，这里统统转为float发送
+     * @note 协议帧尾: 00 00 80 7f
+     */
+    void LogTrackJustFloat();
 };
 
 #endif

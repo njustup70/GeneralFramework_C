@@ -5,6 +5,7 @@
  * @date 2025-8-21
  */
 #include "motor_dji.hpp"
+#include "RtosCpp.hpp"
 #include "bsp_can.h"
 #include "bsp_dwt.h"
 
@@ -28,8 +29,8 @@ void MotorDJI::Init(CAN_HandleTypeDef *hcan, uint8_t motorESC_id, MotorDJIMode d
 	// 首先，初始化其 速度环Pid类
 	if (fastInit)
 	{
-		speed_pid.Init(5, 10, 0);
-		speed_pid.IncreLize();											// 增量式速度环
+		speed_pid.Init(10, 1.6, 0);
+		// speed_pid.IncreLize();											// 增量式速度环
 		speed_pid.ForwardLize(PidGeneral::SpeedForward, 0.8f); 			// 速度型前馈
 	}
 	
@@ -42,6 +43,8 @@ void MotorDJI::Init(CAN_HandleTypeDef *hcan, uint8_t motorESC_id, MotorDJIMode d
 	
 	mode = djimode; // 设置控制模式
 	
+	square_injector_.InitHz(40000.0f, 0.4f); 		// 方波激励器初始化，幅值20000位置单位，频率0.2Hz
+
 	/// @brief 根据电机 ID 和 CAN路线，将其存储到全局的电机实例列表中，同时顺序记录其ID
 	/// 一般一根CAN总线上最多有8个电机，所以CAN1分配到1-8号电机，CAN2分配到9-16号电机
 	if (motorESC_id <= 8 && motorESC_id >= 1)
@@ -127,6 +130,17 @@ uint8_t MotorDJI::_GetCanSeg(uint8_t motor_id)
 	return 0; // 默认返回0
 }
 
+
+float MotorDJI::_GetDelayedCurrent(uint8_t delay_tick)
+{
+	if (delay_tick >= 5) delay_tick = 4; // 最大只能取到4个tick前的数据
+	float history_u = history_current[(history_index + 5 - (delay_tick + 1)) % 5];
+
+	return history_u;
+}
+
+
+
 /**
  * @brief 控制所有已注册电机
  * @details 该函数会遍历所有已注册的电机实例，并调用其Control方法，最后根据返回的电流值发送CAN指令
@@ -207,6 +221,35 @@ int16_t MotorDJI::Control()
 			_MotorDJI_PosLoop();				// 位置环控制 得到速度
 			_MotorDJI_SpeedLoop();			// 速度环控制 得到电流
 		}
+		else if (mode == ADRC_Pos_Control)
+		{
+			_MotorDJI_ADRCPosLoop();				// 位置环控制 得到速度
+		}
+		else if (mode == Identification_Mode)
+		{
+			// 惯量辨识模式
+
+			// 先利用方波激励器产生激励位置
+			targ_position = square_injector_.AutoGetValue(); // 获取当前方波激励值
+
+			// 每0.33s更新一次ADRC的参数b_0
+			static float last_update_tick = DWT_GetTimeline_Sec();
+			float current_tick = DWT_GetTimeline_Sec();
+			if (current_tick - last_update_tick >= 0.33f)
+			{
+				float new_J = 0.9f * motor_adrc.J + 0.1f * g_Identifier.J_hat_;
+
+				motor_adrc.J = new_J; 										// 更新ADRC的b0参数
+				motor_adrc.input_nltd_3rd.ResetR((motor_adrc.Kt * motor_adrc.max_current - motor_adrc.B - 0.1f) / motor_adrc.J);
+				motor_adrc.eso.b0 = motor_adrc.Kt / motor_adrc.J;
+
+				g_Identifier.b0_ = motor_adrc.eso.b0;			// 更新辨识器的b0参数
+				last_update_tick = current_tick;
+			}
+
+
+			_MotorDJI_ADRCPosLoop();			// 位置环控制 得到电流
+		}
 	}
 	else
 	{
@@ -227,11 +270,15 @@ void MotorDJI::_MotorDJI_SpeedLoop()
 	moto_measure_t *ptr = &measure;
 
 	// 计算目标的 速度PID输出（输出为电流）
-	float targ_current_temp = speed_pid.Calc(targ_speed, ptr->speed_rpm, _current_limit);
+	// float targ_current_temp = speed_pid.Calc(targ_speed, kalman_rpm, _current_limit);
+
+	float targ_current_temp = motor_adrc.Calc(targ_speed * (2.0f * 3.1415926f) / (60.0f), ptr->total_angle / (8192.0f) * (2.0f * 3.1415926f));
+	targ_current_temp = targ_current_temp * 16384.0f / 20.0f; // 转换为电流指令值（3508将-20A~20A映射到了-16384~16384）
 
 	// 限制爬坡率
 	float delta_current = targ_current_temp - targ_current;
-	float slope_value = _sloperate * speed_pid.GetDt();
+	// float slope_value = _sloperate * speed_pid.GetDt();
+	float slope_value = _sloperate * 0.001f;
 
 	if (delta_current > slope_value)
 	{
@@ -248,6 +295,10 @@ void MotorDJI::_MotorDJI_SpeedLoop()
 
 	// 最终电流限幅
 	Lim_ABS(targ_current, _current_limit)
+
+	// 记录历史电流值，用于系统延时补偿
+	history_current[history_index++] = targ_current;
+	if (history_index >= 5) history_index = 0;
 }
 
 /**
@@ -264,6 +315,52 @@ void MotorDJI::_MotorDJI_PosLoop()
 	// 最终速度限幅
 	Lim_ABS(targ_speed, _speed_limit)
 }
+
+
+
+/**
+ * @name C620 / C610 速度环控制
+ * @details 计算RPM对应的控制电流
+ */
+void MotorDJI::_MotorDJI_ADRCPosLoop()
+{
+	// 获取测量结构体
+	moto_measure_t *ptr = &measure;
+
+	// 计算目标的当前位置（国际单位制）
+	int total_angle_code = ptr->total_angle;
+	float total_angle_rad = total_angle_code / 8192.0f * (2.0f * 3.1415926f);
+
+	// 输入三阶ADRC，计算目标电流
+	float targ_current_temp = motor_adrc.Calc(targ_position / 8192.0f * (2.0f * 3.1415926f), total_angle_rad);
+	targ_current_temp = targ_current_temp * 16384.0f / 20.0f; // 转换为电流指令值（3508将-20A~20A映射到了-16384~16384）
+
+	// 限制爬坡率
+	float delta_current = targ_current_temp - targ_current;
+	// float slope_value = _sloperate * speed_pid.GetDt();
+	float slope_value = _sloperate * 0.001f;
+
+	if (delta_current > slope_value)
+	{
+		targ_current += slope_value;
+	}
+	else if (delta_current < -slope_value)
+	{
+		targ_current -= slope_value;
+	}
+	else
+	{
+		targ_current = targ_current_temp;
+	}
+
+	// 最终电流限幅
+	Lim_ABS(targ_current, _current_limit)
+
+	// 记录历史电流值，用于系统延时补偿
+	history_current[history_index++] = targ_current;
+	if (history_index >= 5) history_index = 0;
+}
+
 
 
 /**
@@ -297,7 +394,7 @@ void _MotorDJI_DecodeMeasure(MotorDJI* motor_p, uint8_t *Data)
 	ptr->temprature = Data[6];
 
 
-	// 更新圈数统计
+	// 更新圈数统计 (使用的angle而非speed_rpm)
 	if (ptr->angle - ptr->last_angle > 4096)
 		ptr->round_cnt--;
 	else if (ptr->angle - ptr->last_angle < -4096)
@@ -325,6 +422,26 @@ void _MotorDJI_DecodeMeasure(MotorDJI* motor_p, uint8_t *Data)
 
 	// 计算平均接收时间间隔和频率
 	motor_p->_recv_freq = motor_p->_recv_sum_interval > 0 ?(10000.0f / (motor_p->_recv_sum_interval / 10.0f)) : 0.0f;
+
+
+	/*			电机状态观测			*/
+	// 输入为电流，单位A（3508将-20A~20A映射到了-16384 ~ 16384）
+	float current_ampero = motor_p->_GetDelayedCurrent(0) / 16384.0f * 20.0f;
+	
+	// 观测变量为total_angle，但其单位为SI的rad
+	float angle_rad = motor_p->measure.total_angle / 8192.0f * 2.0f * 3.1415926f;
+
+	// 输入数据到观测器
+	motor_p->motor_adrc.Observe(current_ampero, angle_rad);
+
+
+	// 获取系统当前状态
+    float r_cmd = motor_p->motor_adrc.input_nltd_3rd.v2; 		// 你的速度指令
+    float u_out = current_ampero ; 							// ADRC输出的 u (电流/转矩)
+    float z3    = motor_p->motor_adrc.eso.z3;        						// ESO观测到的扰动
+
+    // 3. 喂数据给算法
+    motor_p->g_Identifier.Update(r_cmd, u_out, z3);
 }
 
 
