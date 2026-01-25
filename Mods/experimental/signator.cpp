@@ -1,24 +1,122 @@
-#include "controller.hpp"
+#include "signator.hpp"
+/******************     二阶TD      ******************/
+void LinearTD_2nd::Init(float _r, float _dt)
+{
+    r = _r;
+    dt = _dt;
+    v1 = 0.0f;
+    v2 = 0.0f;
+}
+
+void LinearTD_2nd::Update(float target_input)
+{
+    // 误差
+    float error = v1 - target_input;
+    
+    // 计算期望加速度，一般是按临界阻尼配置
+    float acc = -r * r * error - 2.0f * r * v2;
+    
+    // 欧拉积分更新
+    v1 += v2 * dt;
+    v2 += acc * dt;
+}
+
+
+/******************     三阶TD      ******************/
+void LinearTD_3rd::Init(float _r, float _dt, float _max_v, float _max_a)
+{
+    r = _r;
+    dt = _dt;
+    max_v = _max_v;
+    max_a = _max_a;
+    v1 = 0.0f;
+    v2 = 0.0f;
+    v3 = 0.0f;
+}
+
+void LinearTD_3rd::Update(float target_input)
+{
+    float error = v1 - target_input;
+    
+    // 计算加加速度
+    float jerk = -r*r*r * error - 3.0f*r*r * v2 - 3.0f*r * v3;
+    
+    // 积分更新加速度 v3
+    v3 += jerk * dt;
+
+    // 限制加速度
+    v3 = StdMath::fclamp(v3, max_a); 
+
+    // 积分更新速度 v2
+    v2 += v3 * dt;
+
+    // 限制速度
+    v2 = StdMath::fclamp(v2, max_v);
+
+    // 积分更新位置 v1
+    v1 += v2 * dt;
+}
+
+
+
+/******************     一阶低通滤波器      ******************/
+void LowPassFilter::Init(float cutoff_freq_rad, float dt)      // 这个的截止频率是以 rad/s 为单位的
+{
+    // 计算环节时间常数
+    float time_const = 1.0f / cutoff_freq_rad;
+
+    // 计算滤波系数
+    alpha = dt / (time_const + dt);
+}
+
+void LowPassFilter::InitHz(float cutoff_freq_hz, float dt)      // 这个的截止频率是以 Hz 为单位的
+{
+    float omega_c = 2 * PI * cutoff_freq_hz;  // Hz转rad/s
+    float time_const = 1.0f / omega_c;
+    alpha = dt / (time_const + dt);
+}
+
+float LowPassFilter::Filter(float input)
+{
+    // 很简单的一阶低通滤波，懒得打注释了
+    float y = alpha * input + (1.0f - alpha) * y_prev;
+    y_prev = y;
+    return y;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // 构造函数初始化
 IVIdentifier::IVIdentifier(float b0_nominal, float fs, float cut_freq, float forget_time) : b0_(b0_nominal) 
 {
-    // 计算高通滤波系数 alpha = 1 / (1 + 2*pi*fc*dt)
-    // 实际上离散形式常用: alpha = rc / (rc + dt)
+    // 计算高通滤波系数
     float dt = 1.0f / fs;
     float rc = 1.0f / (2.0f * 3.1415926f * cut_freq);
     hpf_alpha_ = rc / (rc + dt);
 
-    // 计算遗忘因子 lambda
-    // 记忆时间 T = 1 / (1 - lambda) * dt  => lambda = 1 - dt/T
-    // 例如 T=1s, dt=0.001s -> lambda = 0.999
-    if (forget_time < 0.01f) forget_time = 0.01f; // 保护
+    // 计算遗忘系数（不能太短）
+    if (forget_time < 0.1f) forget_time = 0.1f;
     lambda_ = 1.0f - (dt / forget_time);
 
     Reset();
 }
 
-void IVIdentifier::Reset() {
+void IVIdentifier::Reset() 
+{
     theta_iv = 0.0f;
     cov_cross = 0.0f;
     cov_self = 0.0f;
@@ -28,9 +126,10 @@ void IVIdentifier::Reset() {
     last_z3_in_ = 0; last_z3_out_ = 0;
 }
 
-// 核心高通滤波器：y[k] = alpha * (y[k-1] + x[k] - x[k-1])
+
 float IVIdentifier::HighPassFilter(float input, float& last_in, float& last_out)
 {
+    // 高通滤波器：y[k] = a * (y[k-1] + x[k] - x[k-1])
     float output = hpf_alpha_ * (last_out + input - last_in);
     last_in = input;
     last_out = output;

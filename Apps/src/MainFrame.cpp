@@ -5,7 +5,7 @@
 #include "std_cpp.h"
 
 /**     测试用      **/
-#include "controller.hpp"
+#include "signator.hpp"
 
 
 StateCore& core = StateCore::GetInstance();

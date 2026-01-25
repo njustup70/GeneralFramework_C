@@ -2,59 +2,37 @@
 #include "linear_math.hpp"
 #include "bsp_dwt.h"
 
-namespace CtrlUtils
-{
-    static int Signf(float val)
-    {
-        if (val > 0) return 1;
-        else if (val < 0) return -1;
-        else return 0;
-    };
-}
-
 /**
  * @brief 线性化的微分跟踪器
  * @name Lineared Time Differentiator (Linear TD)
  * @note 其实就是一个临界阻尼的二阶系统，用于平滑阶跃输入并计算其导数
  */
-class LinearTD
+class LinearTD_2nd
 {
 public:
-    float v1 = 0.0f;        // 跟踪到的平滑速度 (Tracked Speed)
-    float v2 = 0.0f;        // 跟踪信号的微分 (Tracked Acceleration)
-    float acc = 0.0f;       // 【新增】跟踪加速度 (前馈项)
+    float v1 = 0.0f;        // 跟踪平滑速度，一阶量
+    float v2 = 0.0f;        // 跟踪微分，二阶量
     
-    // 响应速度因子 r: 越大跟踪越快，但也越容易把噪声传进去。
-    // 对于你的500Hz系统，建议尝试 10.0 ~ 50.0
+    /// @brief 响应速度 r: 越大跟踪越快，但噪声变大
     float r = 20.0f; 
+
+    /// @brief 采样周期 dt
     float dt = 0.002f;
 
-    void Init(float _r, float _dt)
-    {
-        r = _r;
-        dt = _dt;
-        v1 = 0.0f;
-        v2 = 0.0f;
-    }
+    /**
+     * @brief 初始化跟踪微分器参数
+     * @param _r   响应速度
+     * @param _dt  采样周期
+     */
+    void Init(float _r, float _dt);
 
     /**
-     * @brief 计算下一时刻的跟踪值
+     * @brief 计算下一时刻的平滑值
      * @param target_input 原始的阶跃目标输入
      */
-    void Update(float target_input)
-    {
-        // 误差
-        float error = v1 - target_input;
-        
-        // 计算期望加速度 (临界阻尼公式: a = -r*r*e - 2*r*v)
-        // 这里的 v2 就是 dv1/dt
-        acc = -r * r * error - 2.0f * r * v2;
-        
-        // 欧拉积分更新
-        v1 += v2 * dt;
-        v2 += acc * dt;
-    }
+    void Update(float target_input);
 };
+
 
 /**
  * @brief 三阶线性跟踪微分器 (3rd-Order Linear TD)
@@ -65,62 +43,32 @@ class LinearTD_3rd
     public:
     float v1 = 0.0f; // 位置
     float v2 = 0.0f; // 速度
-    float v3 = 0.0f; // 加速度 (系统内部状态)
+    float v3 = 0.0f; // 加速度
     
     float r = 20.0f; 
     float dt = 0.002f;
 
-    // === 新增：限制参数 ===
     float max_v = 0.0f; // 最大速度 (0代表不限制)
     float max_a = 0.0f; // 最大加速度 (0代表不限制)
 
-    // 辅助函数：限幅
-    private : float fclamp(float val, float limit) 
-    {
-        if (limit <= 0.0f)  return val; // 0代表不限制
-        if (val > limit)    return limit;
-        if (val < -limit)   return -limit;
-        return val;
-    }
+    /**
+     * @brief 初始化跟踪微分器参数
+     * @param _r   响应速度
+     * @param _dt  采样周期
+     */
+    public : void Init(float _r, float _dt, float _max_v, float _max_a);
 
-    public : void Init(float _r, float _dt, float _max_v, float _max_a)
-    {
-        r = _r;
-        dt = _dt;
-        max_v = _max_v;
-        max_a = _max_a;
-        v1 = 0.0f;
-        v2 = 0.0f;
-        v3 = 0.0f;
-    }
-
-    void Update(float target_input)
-    {
-        float error = v1 - target_input;
-        
-        // 计算加加速度 (Jerk)
-        float jerk = -r*r*r * error - 3.0f*r*r * v2 - 3.0f*r * v3;
-        
-        // 积分更新加速度 v3
-        v3 += jerk * dt;
-
-        // 硬切断加速度
-        v3 = fclamp(v3, max_a); 
-
-        // 积分更新速度 v2
-        v2 += v3 * dt;
-
-        // 插入：硬切断速度
-        v2 = fclamp(v2, max_v);
-
-        // 积分更新位置 v1
-        v1 += v2 * dt;
-    }
+    /**
+     * @brief 计算下一时刻的平滑值
+     * @param target_input 原始的阶跃目标输入
+     */
+    void Update(float target_input);
 };
+
 
 /**
  * @brief 一阶低通滤波器
- * @note 这个跟手写的不同点是，这个是基于截止频率 fc 来设计的，更直观一些
+ * @note 这个跟手写的不同点是，这个是基于截止频率来设计的，更直观一些
  */
 class LowPassFilter 
 {
@@ -128,29 +76,24 @@ public:
     float y_prev = 0.0f;
     float alpha = 1.0f;         // 低通滤波系数 (0~1)
 
-    // fc: 截止频率 (Hz or rad/s), dt: 周期
-    void Init(float cutoff_freq_rad, float dt) 
-    {
-        // 计算 alpha: alpha = dt / (RC + dt)
-        // time_const (RC) = 1 / cutoff_freq_rad
-        float time_const = 1.0f / cutoff_freq_rad;
-        alpha = dt / (time_const + dt);
-    }
+    /**
+     * @brief 初始化低通滤波器
+     * @param cutoff_freq_rad 截止频率 （注意！！单位是 rad/s ）
+     */
+    void Init(float cutoff_freq_rad, float dt);
 
-    void InitHz(float cutoff_freq_hz, float dt) 
-    {
-        float omega_c = 2 * PI * cutoff_freq_hz;  // Hz转rad/s
-        float time_const = 1.0f / omega_c;
-        alpha = dt / (time_const + dt);
-    }
+    /**
+     * @brief 初始化低通滤波器
+     * @param cutoff_freq_rad 截止频率 （注意！！单位是 Hz ）
+     */
+    void InitHz(float cutoff_freq_hz, float dt);
 
-    float Filter(float input) 
-    {
-        // 一阶滤波公式: y = alpha * x + (1-alpha) * y_last
-        float y = alpha * input + (1.0f - alpha) * y_prev;
-        y_prev = y;
-        return y;
-    }
+    /**
+     * @brief 执行低通滤波
+     * @param input 当前输入值
+     * @return 滤波后输出值
+     */
+    float Filter(float input);
 };
 
 
@@ -162,10 +105,10 @@ class FrictionCompensator
     public:
     FrictionCompensator() {};
 
-    float fric_static = 0.0f;   // 静摩擦补偿 (电流：A)
-    float fric_dynamic = 0.0f;  // 动摩擦补偿 (电流：A)
-    float vel_transition_start = 0.0f; // 速度过渡起点 (rad/s)
-    float vel_transition_end = 0.0f;   // 速度过渡终点 (rad/s)
+    float fric_static = 0.0f;               // 静摩擦补偿 (电流：A)
+    float fric_dynamic = 0.0f;              // 动摩擦补偿 (电流：A)
+    float vel_transition_start = 0.0f;      // 速度过渡起点 (rad/s)
+    float vel_transition_end = 0.0f;        // 速度过渡终点 (rad/s)
 
     LowPassFilter lpf_fric;     // 限制补偿带宽，放置补偿突变，把ESO干爆
     
@@ -191,7 +134,7 @@ class FrictionCompensator
         if (fabs(v_real) > vel_transition_end)
         {
             // 根据符号判定，摩擦力与速度方向相反
-            i_total = -fric_dynamic * CtrlUtils::Signf(v_real);
+            i_total = -fric_dynamic * StdMath::signf(v_real);
         }
         // 速度在过渡区间，线性插值
         else if (fabs(v_real) > vel_transition_start)
@@ -199,12 +142,12 @@ class FrictionCompensator
             // 计算线性比
             float ratio = (fabs(v_real) - vel_transition_start) / (vel_transition_end - vel_transition_start);
             // 根据符号判定，摩擦力与速度方向相反
-            i_total = -(fric_static + (fric_dynamic - fric_static) * ratio) * CtrlUtils::Signf(v_real);
+            i_total = -(fric_static + (fric_dynamic - fric_static) * ratio) * StdMath::signf(v_real);
         }
         // 速度很小，使用静摩擦补偿
         else
         {
-            i_total = -fric_static * CtrlUtils::Signf(v_real);
+            i_total = -fric_static * StdMath::signf(v_real);
         }
 
         return i_total;
@@ -216,7 +159,7 @@ class FrictionCompensator
         float i_total = 0.0f;
 
         // 使用静摩擦补偿
-        i_total = -fric_static * CtrlUtils::Signf(v_real) * 0.75f;
+        i_total = -fric_static * StdMath::signf(v_real) * 0.75f;
 
         return i_total;
     }
@@ -238,7 +181,7 @@ class FrictionCompensator
             if (fabs(real_velo) > vel_transition_end)
             {
                 // 根据符号补偿
-                i_total = fric_dynamic * CtrlUtils::Signf(real_velo);
+                i_total = fric_dynamic * StdMath::signf(real_velo);
             }
             // 速度在过渡区间，线性插值
             else if (fabs(real_velo) > vel_transition_start)
@@ -246,12 +189,12 @@ class FrictionCompensator
                 // 计算线性比
                 float ratio = (fabs(real_velo) - vel_transition_start) / (vel_transition_end - vel_transition_start);
                 // 根据符号补偿
-                i_total = (fric_static + (fric_dynamic - fric_static) * ratio) * CtrlUtils::Signf(real_velo);
+                i_total = (fric_static + (fric_dynamic - fric_static) * ratio) * StdMath::signf(real_velo);
             }
             // 速度很小，使用静摩擦补偿
             else
             {
-                i_total = fric_static * CtrlUtils::Signf(real_velo);
+                i_total = fric_static * StdMath::signf(real_velo);
             }
         }
         // 当系统希望能量减小，或不变时，实际上摩擦力在帮忙刹车，不进行补偿
@@ -267,7 +210,9 @@ class FrictionCompensator
     };
 };
 
-
+/**
+ * @brief 方波激励信号发生器
+ */
 class SquareInjector
 {
     public:
@@ -347,36 +292,37 @@ class KalmanObserver
         // 获得新息
         Matrix<meas_dim, 1> y_tilde = measurement - y;
 
-        // 计算新息协方差: S = H * P * H^T + R
+        // 计算新息的协方差
         Matrix<meas_dim, meas_dim> S = H * P * H.transpose() + R;
 
-        // 岭回归修正
+        // 为防止数值不稳定，给 S 加一个很小的对角线项
         S = S + Matrix<meas_dim, meas_dim>::identity() * 1e-6f;
         
-        // 计算 S 的逆矩阵 S_inv
+        // 计算 S 的逆矩阵
         Matrix<meas_dim, meas_dim> S_inv;
         
         // 尝试求逆
         if (S.inverse(S_inv))       // 求逆成功，执行更新
         {
-            // 计算卡尔曼增益: K = P * H^T * S^-1
+            // 计算卡尔曼增益
             Matrix<state_dim, meas_dim> K = P * H.transpose() * S_inv;
 
-            // 更新状态估计: x_k|k = x_k|k-1 + K * y_tilde
+            // 更新状态估计
             x = x + K * y_tilde;
 
-            // 更新误差协方差: P_k|k = (I - K * H) * P_k|k-1
+            // 更新误差协方差
             Matrix<state_dim, state_dim> I = Matrix<state_dim, state_dim>::identity();
             P = (I - K * H) * P;
         }
         else
         {
-            // 求逆失败 (矩阵奇异)
-            // 严重警告：通常意味着 R 设置过小，或者系统进入了不可观测状态。
-            // 策略：跳过本次更新，仅信任模型预测。
-            // 这样可以防止 x 变成 NaN 或 Inf，保证机器人不会失控。
+            /**
+             * @brief 求逆失败
+             * @note 如果程序能跑到这里说明求逆炸缸了，一般是R太小了，或者系统本身能观性有问题。
+             * 那就跳过修正更新只靠预测
+             */
         }
-    }
+    }     
 };
 
 

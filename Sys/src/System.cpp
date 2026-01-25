@@ -10,8 +10,8 @@ LedWs2812 sys_ledband;
 
 void SystemType::Init(bool Sc)
 {
-    // 初始化DWT计时器
-    DWT_Init(CPU_HERT_A_BOARD_MHZ);
+    // 初始化DWT计时器（C板）
+    DWT_Init(CPU_HERT_C_BOARD_MHZ);
 
     // 初始化Monitor监视器
     Monitor::GetInstance().Init(&huart1, nullptr, false);

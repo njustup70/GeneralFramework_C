@@ -1,5 +1,5 @@
 #pragma once
-#include "controller.hpp"
+#include "signator.hpp"
 
 
 /**
@@ -202,7 +202,7 @@ public:
     FrictionCompensator fric_comp;
 
     /// @brief 输入微分跟踪器
-    LinearTD input_td;
+    LinearTD_2nd input_td;
     LinearTD_3rd input_td_3rd;
     NonlinearTD input_nltd_3rd;
 

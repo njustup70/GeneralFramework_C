@@ -210,7 +210,20 @@ float Limit_ABS(float targ_num, float limit_mx);
 
 namespace StdMath
 {
+    /// @brief 转速转弧度速度
+    /// @param rpm 转速 (RPM)
+    /// @return 弧度速度
     float RpmToRadS(float rpm);
+
+    /// @brief 限幅函数
+    /// @param val 目标值
+    /// @param limit 限幅值
+    float fclamp(float val, float limit);
+
+    /// @brief 符号函数
+    /// @param val 目标值
+    /// @return 目标值的符号 + / -
+    int signf(float val);
 }
 
 
