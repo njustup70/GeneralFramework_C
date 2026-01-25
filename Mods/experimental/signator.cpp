@@ -2,10 +2,12 @@
 
 /*************************************     二阶TD      *************************************/
 
-void LinearTD_2nd::Init(float _r, float _dt)
+void LinearTD_2nd::Init(float _r, float _dt, float _max_v, float _max_a)
 {
     r = _r;
     dt = _dt;
+    max_v = _max_v;
+    max_a = _max_a;
     v1 = 0.0f;
     v2 = 0.0f;
 }
@@ -15,12 +17,26 @@ void LinearTD_2nd::Update(float target_input)
     // 误差
     float error = v1 - target_input;
 
-    // 计算期望加速度，一般是按临界阻尼配置
-    float acc = -r * r * error - 2.0f * r * v2;
+    // 计算期望加加速度jerk，一般是按临界阻尼配置
+    float jerk = -r * r * error - 2.0f * r * v2;
+
+    
+    v2 += jerk * dt;
+
+    if (max_a > 0.0f)
+    {
+        v2 = StdMath::fclamp(v2, max_a);
+    }
+
 
     // 欧拉积分更新
     v1 += v2 * dt;
-    v2 += acc * dt;
+    
+
+    if (max_v > 0.0f)
+    {
+        v1 = StdMath::fclamp(v1, max_v);
+    }
 }
 
 /*************************************     三阶TD      *************************************/
@@ -249,15 +265,19 @@ float SquareInjector::AutoGetValue()
 // 构造函数初始化
 IVIdentifier::IVIdentifier(float b0_nominal, float fs, float cut_freq, float forget_time) : b0_(b0_nominal)
 {
-    // 计算高通滤波系数
     float dt = 1.0f / fs;
-    float rc = 1.0f / (2.0f * 3.1415926f * cut_freq);
-    hpf_alpha_ = rc / (rc + dt);
+
+    // 配置高通滤波器
+    hpf_r_.Init(cut_freq, dt);
+    hpf_u_.Init(cut_freq, dt);
+    hpf_z3_.Init(cut_freq, dt);
 
     // 计算遗忘系数（不能太短）
     if (forget_time < 0.1f)
         forget_time = 0.1f;
     lambda_ = 1.0f - (dt / forget_time);
+
+    lambad_rho = 1.0f - (dt / 0.125f);
 
     Reset();
 }
@@ -280,18 +300,24 @@ void IVIdentifier::Update(float r_cmd, float u_ctrl, float z3_obs)
     cov_cross = lambda_ * cov_cross + r_ac * z3_ac; // 互相关矩阵
     cov_self = lambda_ * cov_self + r_ac * u_ac;    // 自相关矩阵
 
+    // 计算相关系数
+    cov_ru = lambad_rho * cov_ru + r_ac * u_ac;
+    var_r = lambad_rho * var_r + r_ac * r_ac;
+    var_u = lambad_rho * var_u + u_ac * u_ac;
+
     // 为了防止激发模态不足，导致的不可辨识问题，这里利用 参考输入的自相关判断
-    const float CALCULATION_THRES = 650.0f;
+    // 计算r和u的相关系数
+    rho_ru = StdMath::fclamp(cov_ru / (sqrtf(var_r * var_u) + 1e-6f), 1.0f);
 
     // 激发模态充分的前提下，计算辨识参数 theta_iv
-    if (fabs(cov_self) > CALCULATION_THRES)
+    if (rho_ru > 0.225f)
     {
         float raw_theta = cov_cross / cov_self;
 
         // 一阶低通滤波防止突变
         theta_iv = 0.99f * theta_iv + 0.01f * raw_theta;
 
-        // 工程上，再来一阶低通滤波
+        // 再加一级低通滤波
         theta_iv_accum_ = 0.999f * theta_iv_accum_ + 0.001f * theta_iv;
     }
 
@@ -300,7 +326,7 @@ void IVIdentifier::Update(float r_cmd, float u_ctrl, float z3_obs)
 
     if (real_b < 0.0001f)
         real_b = 0.0001f; // 保护数据
-    J_hat_ = Kt_ / real_b;
+    J_hat_ = StdMath::fclamp(Kt_ / real_b, 0.1f);
 }
 
 float IVIdentifier::GetEstimatedJ(float Kt) const

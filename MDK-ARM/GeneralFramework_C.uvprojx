@@ -1046,16 +1046,6 @@
               <FileType>8</FileType>
               <FilePath>..\Mods\src\std_msg.cpp</FilePath>
             </File>
-            <File>
-              <FileName>controller.cpp</FileName>
-              <FileType>8</FileType>
-              <FilePath>..\Mods\src\controller.cpp</FilePath>
-            </File>
-            <File>
-              <FileName>adrc.cpp</FileName>
-              <FileType>8</FileType>
-              <FilePath>..\Mods\experimental\adrc.cpp</FilePath>
-            </File>
           </Files>
         </Group>
         <Group>
@@ -1198,6 +1188,26 @@
                 </CommonProperty>
                 <FileArmAds/>
               </FileOption>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Experimental</GroupName>
+          <Files>
+            <File>
+              <FileName>adrc.cpp</FileName>
+              <FileType>8</FileType>
+              <FilePath>..\Mods\experimental\adrc.cpp</FilePath>
+            </File>
+            <File>
+              <FileName>hyperPID.cpp</FileName>
+              <FileType>8</FileType>
+              <FilePath>..\Mods\experimental\hyperPID.cpp</FilePath>
+            </File>
+            <File>
+              <FileName>signator.cpp</FileName>
+              <FileType>8</FileType>
+              <FilePath>..\Mods\experimental\signator.cpp</FilePath>
             </File>
           </Files>
         </Group>

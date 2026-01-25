@@ -39,14 +39,25 @@ typedef struct
 	uint32_t msg_cnt;
 } moto_measure_t;
 
+
 typedef enum
 {
-	Pos_Control,
-	Speed_Control,
+	PID_PosControl,
+	PID_SpeedControl,
+	ADRC_PosControl,
+	ADRC_SpeedControl,
 	None_Control,
-	ADRC_Pos_Control,
-	Identification_Mode,
+	Identify_Mode,
 }MotorDJIMode;
+
+typedef enum
+{
+	Realtime,
+	Dynamic,
+	Fluid,
+	Stable,
+	Static,
+}MotorIdentifyIntensity;
 
 
 /// @brief 电机类：C620 / C610
@@ -64,7 +75,7 @@ private:
 	/// @brief 速度限幅 	(减速比前的RPM)
 	uint16_t _speed_limit = 20000;
 	/// @brief 爬坡率限制	(单位：current/s)
-	uint32_t _sloperate = 600000;
+	uint32_t _sloperate = 900000;
 	
 
 	/// @brief 前10次接收数据的平均时间间隔(最小单位：0.1ms，uint16精度)，用于判断电机在线质量
@@ -81,13 +92,23 @@ private:
 	/// @brief 电机电流低通滤波系数
 	float _read_current_lpf_rate = 0.5f; 
 
+	bool dynamic_identify = false;
+	MotorIdentifyIntensity idtf_intensity = Stable;
+
+	float idtf_interval = 5.0f;
+	float idtf_coeff = 0.1f;
+
 	/** 	  方法		**/
 	/// @brief 电机速度环控制 
 	void _MotorDJI_SpeedLoop();
+	void _MotorDJI_ADRCSpdLoop();
+
 	/// @brief 电机位置环控制
 	void _MotorDJI_PosLoop();
-	
 	void _MotorDJI_ADRCPosLoop();
+
+	/// @brief 自整定过程
+	void SelfIdentify();
 
 	float _GetDelayedCurrent(uint8_t delay_tick);		// 获取历史电流值，用于系统环路延时补偿
 
@@ -98,7 +119,8 @@ public:
 	MotorDJI(){};
 
 	/** 	  方法		**/
-	void Init(CAN_HandleTypeDef *hcan, uint8_t motorESC_id, MotorDJIMode djimode, bool fastInit = true);
+	void Init(CAN_HandleTypeDef *hcan, uint8_t motorESC_id, MotorDJIMode djimode);
+	void Dynamicle(MotorIdentifyIntensity intensity);
 	void SwitchMode(MotorDJIMode new_mode);
 	void SetSpeed(float rpm, float redu_ratio = 19.0f);			// 3508的默认减速比（用2006的时候记得改！）
 	void SetPos(float pos);
@@ -147,8 +169,8 @@ public:
 	ADRC motor_adrc;			// 电机用的 ADRC 控制器	
 
 
-	// 假设 b0 = 100, 采样率 1000Hz, 高通截止 2Hz, 记忆时间 2.0秒
-	IVIdentifier g_Identifier = IVIdentifier(19.62, 1000.0f, 2.0f, 1.0f);	// 惯量辨识器
+	// 假设 b0 = 100, 采样率 1000Hz, 高通截止 4Hz, 记忆时间 2.0秒
+	IVIdentifier g_Identifier = IVIdentifier(19.62, 1000.0f, 4.0f, 1.0f);	// 惯量辨识器
 
 	SquareInjector square_injector_; // 方波激励器
 };

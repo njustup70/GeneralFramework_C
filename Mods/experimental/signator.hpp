@@ -19,12 +19,19 @@ public:
     /// @brief 采样周期 dt
     float dt = 0.002f;
 
+    /// @brief 最大跟踪速度 (0代表不限制)
+    float max_v = 0.0f;
+    /// @brief 最大跟踪加速度 (0代表不限制)
+    float max_a = 0.0f;
+
     /**
      * @brief 初始化跟踪微分器参数
      * @param _r   响应速度
      * @param _dt  采样周期
+     * @param _max_v 最大速度限制 (Default: 0)
+     * @param _max_a 最大加速度限制 (Default: 0)
      */
-    void Init(float _r, float _dt);
+    void Init(float _r, float _dt, float _max_v = 0.0f, float _max_a = 0.0f);
 
     /**
      * @brief 计算下一时刻的平滑值
@@ -302,13 +309,19 @@ public:
     // 参数
     float b0_;
     float lambda_;                  // 遗忘因子 (0 < lambda < 1)
+    float lambad_rho;
     float hpf_alpha_;               // 高通滤波器系数
     
     // 状态变量
     float theta_iv;                 // 最终辨识参数
     float theta_iv_accum_;          // 累计和，用于计算平均值
-    float cov_cross;                // 分子累加器 (Cov(r, z3))
-    float cov_self;                 // 分母累加器 (Cov(r, u))
+    float cov_cross;                // 互相关系数 (Cov(r, z3))
+    float cov_self;                 // 自相关系数 (Cov(r, u))
+
+    float cov_ru;
+    float var_r;
+    float var_u;
+    float rho_ru;
 
     float Kt_ = 0.01562;            // 转矩常数
     float J_hat_ = 0.0f;            // 估计的惯量

@@ -151,6 +151,11 @@ float StdMath::RpmToRadS(float rpm)
     return rpm * (2.0f * 3.1415926f) / 60.0f;
 }
 
+float StdMath::RadSToRpm(float rad_s)
+{
+    return rad_s * 60.0f / (2.0f * 3.1415926f);
+}
+
 float StdMath::fclamp(float val, float limit)
 {
     if (limit <= 0.0f)  return val;         // 0代表不限制

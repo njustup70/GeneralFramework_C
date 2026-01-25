@@ -128,26 +128,26 @@ void ADRC::Init(ADRCType _ad_t, float wo, float wc, float _J, float _B, float _K
     if (_ad_t == Sec_Ord)
     {
         // 初始化 TD
-        input_td.Init(24.0f, _dt); 
+        input_td.Init(28.0f, _dt, StdMath::RpmToRadS(4000.0f), fmax((_Kt * _max_curr - B)* 0.75f, 1e-5f) / J); 
 
         // 初始化转速低通滤波器
-        lpf_w.Init(50.0f, _dt);
+        lpf_w.Init(200.0f, _dt);
 
         // 初始化负载转矩低通滤波器
-        lpf_TL.InitHz(25.0f, _dt);
+        lpf_TL.InitHz(5.0f, _dt);
 
         // 将w_c转为rad
         wc = wc * (2.0f * PI);
 
-        kp = wc * wc;
+        kp = 2 * wc;
     }
     else if (_ad_t == Thr_Ord)
     {
         // 初始化 TD
         // input_td_3rd.Init(9.0f, _dt);
         // 计算r
-        float r_maxacc = (_Kt * _max_curr - B - 0.1f) / J;              // 留一点余量
-        input_nltd_3rd.Init(r_maxacc * 0.6f, 3 * _dt, _dt, StdMath::RpmToRadS(4000.0f)); 
+        float r_maxacc = fmax((_Kt * _max_curr - B), 1e-5f) / J;              // 留一点余量
+        input_nltd_3rd.Init(r_maxacc * 0.75f, 3 * _dt, _dt, StdMath::RpmToRadS(7000.0f)); 
 
         // 将w_c转为rad
         wc = wc * (2.0f * PI);
@@ -156,7 +156,7 @@ void ADRC::Init(ADRCType _ad_t, float wo, float wc, float _J, float _B, float _K
         kd = 2.0f * 0.85f * wc;
 
         // 初始化负载转矩低通滤波器
-        lpf_TL.InitHz(42.0f, _dt);
+        lpf_TL.InitHz(40.0f, _dt);
 
         // 初始化摩擦模型
         fric_comp.Init(0.25f, 0.05f, 40.0f, 120.0f);
@@ -175,6 +175,7 @@ float ADRC::CalcSpeed(float target_speed, float measure_theta_total)
     // 提取状态
     float omega_hat = eso.z2;                                   // 估计速度
     float omega_hat_filtered = lpf_w.Filter(omega_hat);
+    debug_3 = StdMath::RadSToRpm(omega_hat_filtered);
 
     // 扰动补偿 (包含摩擦补偿)
     float i_dist = -(eso.z3 / eso.b0); 
@@ -182,17 +183,22 @@ float ADRC::CalcSpeed(float target_speed, float measure_theta_total)
 
     // 误差反馈
     float error = input_td.v1 - omega_hat_filtered;
+    debug_2 = error;
     float i_acc = (J * kp * error) / Kt;
+    debug_0 = i_acc / 20.0f * 16384.0f;    
 
     // 加速度前馈
     float i_feedforward = (J * input_td.v2) / Kt * coeff_feedforward;
 
     // 总控制输出
     float i_total = i_acc + i_dist + i_feedforward;
+    debug_1 = i_total / 20.0f * 16384.0f;    
 
     // 
     if (i_total > max_current) i_total = max_current;
     else if (i_total < -max_current) i_total = -max_current;
+
+    debug_2 = input_nltd_3rd.v3;
 
     // Debug
     debug_omega = omega_hat_filtered * 60.0f / (2.0f * 3.1415926f); // 转换为rpm;
@@ -202,6 +208,12 @@ float ADRC::CalcSpeed(float target_speed, float measure_theta_total)
 
     return i_total;
 }
+
+
+
+
+float err_p, err_v;
+float dist_hat;
 
 /**
  * @brief 位置模式下（三阶）ADRC控制
@@ -215,17 +227,22 @@ float ADRC::CalcPos(float target_pos, float measure_theta_total)
     // 提取 ESO 状态
     float pos_hat = eso.z1;      // 估计位置
     float vel_hat = eso.z2;      // 估计速度
-    float dist_hat = eso.z3;     // 估计的总扰动加速度
+    dist_hat = eso.z3;     // 估计的总扰动加速度
+    dist_hat = lpf_TL.Filter(dist_hat);
+
+    debug_0 = pos_hat;
 
     // 利用TD的输出作为参考输入，计算误差
-    float err_p = input_nltd_3rd.v1 - pos_hat;
-    float err_v = input_nltd_3rd.v2 - vel_hat;
+    err_p = input_nltd_3rd.v1 - pos_hat;
+    err_v = input_nltd_3rd.v2 - vel_hat;
 
     // PD 控制律
     float u0 = kp * err_p + kd * err_v + input_nltd_3rd.v3;
 
+    debug_1 = u0 / eso.b0;
+
     // 扰动补偿
-    float i_des = lpf_TL.Filter((u0 - dist_hat) / eso.b0);
+    i_des = (u0 - dist_hat) / eso.b0;
 
     // 零速摩擦补偿
     if (_friccomp_enabled)

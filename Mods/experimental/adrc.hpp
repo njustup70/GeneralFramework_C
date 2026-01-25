@@ -184,13 +184,18 @@ private:
     bool _squareinj_enabled = false;        // 是否启用方波激励
 
 public:
+
+    float debug_0, debug_1, debug_2, debug_3;
+
+
+
     float J;            // 转动惯量 (kg*m^2)
     float B;            // 粘滞摩擦系数 (N*m*s/rad)
     float Kt;           // 转矩常数 (N*m/A)
     float max_current;  // 最大电流 (A)
     
     // 负载估计系数
-    float coeff_feedforward = 1.0f;
+    float coeff_feedforward = 0.55f;
 
     /// @brief 扩张状态观测器实例
     ESO eso;
@@ -217,6 +222,7 @@ public:
     
     typedef enum ADRCType
     {
+        None_Enabled,
         Sec_Ord,        // 二阶ADRC（速度模式）
         Thr_Ord,        // 三阶ADRC（位置模式）
     };
@@ -281,4 +287,6 @@ public:
     float debug_ltd_targ_omega;
     float debug_ltd_targ_pos;
     float debug_current;
+
+    float i_des;
 };

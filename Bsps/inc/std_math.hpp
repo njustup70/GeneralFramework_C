@@ -215,6 +215,11 @@ namespace StdMath
     /// @return 弧度速度
     float RpmToRadS(float rpm);
 
+    /// @brief 弧度速度转转速
+    /// @param rad_s 
+    /// @return 
+    float RadSToRpm(float rad_s);
+
     /// @brief 限幅函数
     /// @param val 目标值
     /// @param limit 限幅值
